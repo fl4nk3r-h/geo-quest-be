@@ -1,7 +1,7 @@
 /**
  * Service for validating and scoring answers in GeoQuest.
  * <p>
- * Handles answer submission, scoring, cooldowns, and hint logic.
+ * Handles answer submission, scoring, and hint logic.
  * <p>
  * Methods:
  * <ul>
@@ -11,7 +11,7 @@
  * Usage:
  * <ul>
  *   <li>Used by controllers to process answer submissions and return results.</li>
- *   <li>Enforces proximity, cooldown, and attempt rules.</li>
+ *   <li>Enforces proximity and attempt rules.</li>
  *   <li>Returns riddle/hint for next location on correct answer.</li>
  * </ul>
  *
@@ -44,7 +44,6 @@ import com.applabs.geo_quest.repository.TeamRepository;
 @Service
 public class AnswerService {
 
-    private static final long MARKER_COOLDOWN_MINUTES = 10;
     private static final int MAX_WRONG_ATTEMPTS = 2;
     private static final double GPS_TOLERANCE_METERS = 15.0;
 
@@ -112,22 +111,7 @@ public class AnswerService {
             throw new IllegalStateException("Session has expired");
         }
 
-        // ── 5. Per-marker cooldown check ─────────────────────────────────────
-        String spawnId = request.getSpawnLocationId();
-        Long cooldownUntilEpoch = session.getMarkerCooldowns().get(spawnId);
-        if (cooldownUntilEpoch != null
-                && Instant.now().getEpochSecond() < cooldownUntilEpoch) {
-            Instant cooldownUntil = Instant.ofEpochSecond(cooldownUntilEpoch);
-            return new AnswerResultResponse(
-                    false,
-                    "Marker is on cooldown for your team",
-                    0,
-                    session.getScore(),
-                    cooldownUntil.toString(),
-                    null);
-        }
-
-        // ── 6. Already answered correctly? ───────────────────────────────────
+        // ── 5. Already answered correctly? ───────────────────────────────────
         if (session.getAnsweredQuestionIds().contains(request.getQuestionId())) {
             return new AnswerResultResponse(
                     false,
@@ -138,11 +122,11 @@ public class AnswerService {
                     null);
         }
 
-        // ── 7. Load question ─────────────────────────────────────────────────
+        // ── 6. Load question ─────────────────────────────────────────────────
         Question question = questionRepository.findById(request.getQuestionId())
                 .orElseThrow(() -> new QuestionNotFoundException(request.getQuestionId()));
 
-        // ── 8. GPS proximity check — CLOSES THE HOSTEL EXPLOIT ───────────────
+        // ── 7. GPS proximity check — CLOSES THE HOSTEL EXPLOIT ───────────────
         double distanceMeters = locationService.distanceBetween(
                 request.getUserLat(), request.getUserLng(),
                 question.getLatitude(), question.getLongitude());
@@ -161,7 +145,7 @@ public class AnswerService {
                     null);
         }
 
-        // ── 9. Wrong-attempt gate ─────────────────────────────────────────────
+        // ── 8. Wrong-attempt gate ─────────────────────────────────────────────
         String questionId = request.getQuestionId();
         int wrongSoFar = session.getQuestionAttempts().getOrDefault(questionId, 0);
 
@@ -176,16 +160,15 @@ public class AnswerService {
                     null);
         }
 
-        // ── 10. Evaluate the answer ───────────────────────────────────────────
+        // ── 9. Evaluate the answer ───────────────────────────────────────────
         boolean correct = question.getCorrectAnswer() != null
                 && question.getCorrectAnswer().trim()
                         .equalsIgnoreCase(request.getAnswer().trim());
 
         int pointsAwarded = 0;
-        String cooldownUntilStr = null;
 
         if (correct) {
-            // ── 11. Calculate points (penalty if any prior wrong attempts) ────
+            // ── 10. Calculate points (penalty if any prior wrong attempts) ────
             int fullPoints = question.getPoints();
 
             if (wrongSoFar == 0) {
@@ -197,19 +180,13 @@ public class AnswerService {
                         fullPoints * (PENALTY_NUMERATOR / PENALTY_DENOMINATOR));
             }
 
-            // ── 12. Apply score, mark answered, set cooldown ──────────────────
+                // ── 11. Apply score and mark answered ─────────────────────────────
             session.setScore(session.getScore() + pointsAwarded);
             session.getAnsweredQuestionIds().add(questionId);
 
-            long cooldownEpoch = Instant.now()
-                    .plusSeconds(MARKER_COOLDOWN_MINUTES * 60)
-                    .getEpochSecond();
-            session.getMarkerCooldowns().put(spawnId, cooldownEpoch);
-            cooldownUntilStr = Instant.ofEpochSecond(cooldownEpoch).toString();
-
             sessionRepository.save(session);
 
-            // ── 13. Sync leaderboard ──────────────────────────────────────────
+                // ── 12. Sync leaderboard ──────────────────────────────────────────
             leaderboardService.updateScore(
                     session.getTeamId(), team.getTeamName(), session.getScore());
 
@@ -234,21 +211,39 @@ public class AnswerService {
                     "Correct! +" + pointsAwarded + " points" + penaltyNote,
                     pointsAwarded,
                     session.getScore(),
-                    cooldownUntilStr,
+                    null,
                     nextHint);
 
         } else {
-            // ── 14. Wrong answer — increment attempt counter ──────────────────
+                // ── 13. Wrong answer — increment attempt counter ──────────────────
             int newWrongCount = wrongSoFar + 1;
             session.getQuestionAttempts().put(questionId, newWrongCount);
-            sessionRepository.save(session);
-
+            
             int attemptsLeft = MAX_WRONG_ATTEMPTS - newWrongCount;
+            String message;
+            String nextHintForLocked = null;
 
-            String message = attemptsLeft > 0
-                    ? "Wrong answer. " + attemptsLeft + " attempt(s) remaining. "
-                            + "Note: next correct answer will award 3/5 points."
-                    : "Wrong answer. Question is now locked — no more attempts allowed.";
+            if (attemptsLeft <= 0) {
+                // Question is now locked - mark as "answered" (with 0 points) so user moves to next
+                session.getAnsweredQuestionIds().add(questionId);
+                message = "Wrong answer. Question is now locked — moving to next question.";
+                
+                // Find the next question's hint
+                for (String qid : session.getAssignedQuestionIds()) {
+                    if (!session.getAnsweredQuestionIds().contains(qid)) {
+                        Question nextQ = questionRepository.findById(qid).orElse(null);
+                        if (nextQ != null) {
+                            nextHintForLocked = nextQ.getDescription();
+                            break;
+                        }
+                    }
+                }
+            } else {
+                message = "Wrong answer. " + attemptsLeft + " attempt(s) remaining. "
+                        + "Note: next correct answer will award 3/5 points.";
+            }
+            
+            sessionRepository.save(session);
 
             return new AnswerResultResponse(
                     false,
@@ -256,7 +251,7 @@ public class AnswerService {
                     0,
                     session.getScore(),
                     null,
-                    null);
+                    nextHintForLocked);
         }
     }
 }

@@ -6,7 +6,9 @@ import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -47,5 +49,15 @@ public class LeaderboardController {
     @GetMapping
     public ResponseEntity<List<Leaderboard>> getLeaderboard() {
         return ResponseEntity.ok(leaderboardService.getLeaderboard());
+    }
+
+    /**
+     * DELETE /api/leaderboard/{teamId}
+     * Clears the score for a team (used for debug restart).
+     */
+    @DeleteMapping("/{teamId}")
+    public ResponseEntity<Void> clearScore(@PathVariable String teamId) {
+        leaderboardService.clearScore(teamId);
+        return ResponseEntity.noContent().build();
     }
 }

@@ -59,4 +59,12 @@ public class LeaderboardService {
         entry.setLastUpdated(Instant.now());
         leaderboardRepository.save(entry);
     }
+
+    /**
+     * Clears the score for a team from the leaderboard.
+     * Used when restarting a game (debug).
+     */
+    public void clearScore(String teamId) {
+        leaderboardRepository.deleteById(teamId);
+    }
 }

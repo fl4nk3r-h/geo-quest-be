@@ -98,10 +98,12 @@ public class SessionController {
             throw new AccessDeniedException("You are not a member of this team");
         }
 
-        // Prevent duplicate active sessions
+        // End any existing active session before starting a new one
         sessionRepository.findByTeamIdAndStatus(request.getTeamId(), SessionStatus.ACTIVE)
-                .ifPresent(s -> {
-                    throw new IllegalStateException("Team already has an active session");
+                .ifPresent(existingSession -> {
+                    existingSession.setStatus(SessionStatus.COMPLETED);
+                    existingSession.setEndTime(Instant.now());
+                    sessionRepository.save(existingSession);
                 });
 
         // ── Assign a uniquely-shuffled question list to this session ─────────
