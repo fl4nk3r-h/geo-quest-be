@@ -60,7 +60,11 @@ public class AuthController {
         System.out.println("Received authentication request");
         String idToken = body.get("idToken");
         if (idToken == null || idToken.isBlank()) {
-            System.err.println("No idToken provided in request body");
+            System.err.println("No idToken proviif (ENFORCE_DOMAIN_RESTRICTION && (email == null || !email.endsWith(\"@\" + ALLOWED_DOMAIN))) {\n" + //
+                                "    System.out.println(\"Domain restriction enforced - rejecting email: \" + email);\n" + //
+                                "    return ResponseEntity.status(403).body(Map.of(\n" + //
+                                "            \"error\", \"Access restricted to @\" + ALLOWED_DOMAIN + \" accounts\"));\n" + //
+                                "}ded in request body");
             return ResponseEntity.badRequest().body(Map.of("error", "idToken is required"));
         }
 
