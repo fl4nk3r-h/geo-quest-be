@@ -1,11 +1,11 @@
 /**
- * JWT authentication filter for GeoQuest backend.
+ * Firebase authentication filter for GeoQuest backend.
  * <p>
- * Parses and validates JWT tokens from Authorization headers, sets authentication context.
+ * Verifies Firebase ID tokens from Authorization headers and sets authentication context.
  * <p>
  * Key features:
  * <ul>
- *   <li>Validates JWT tokens using JwtUtil</li>
+ *   <li>Verifies Firebase ID tokens using Firebase Admin SDK</li>
  *   <li>Sets user authentication in SecurityContext</li>
  *   <li>Handles invalid/expired tokens with 401 response</li>
  * </ul>
@@ -17,8 +17,6 @@
  * </ul>
  *
  * @author fl4nk3r
- * @since 2026-03-11
- * @version 3.0
  */
 package com.applabs.geo_quest.security;
 
@@ -31,7 +29,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import io.jsonwebtoken.Claims;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
+import com.google.firebase.auth.FirebaseToken;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -39,12 +40,6 @@ import jakarta.servlet.http.HttpServletResponse;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
-
-    private final JwtUtil jwtUtil;
-
-    public JwtAuthenticationFilter(JwtUtil jwtUtil) {
-        this.jwtUtil = jwtUtil;
-    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -58,18 +53,32 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         try {
-            Claims claims = jwtUtil.parse(header.substring(7));
-            String uid = claims.getSubject();
+            String idToken = header.substring(7);
+            
+            // Verify the Firebase ID token
+            FirebaseToken decodedToken = FirebaseAuth.getInstance().verifyIdToken(idToken);
+            String uid = decodedToken.getUid();
+            String email = decodedToken.getEmail();
+
+            System.out.println("Firebase token verified for user: " + email + " (uid: " + uid + ")");
 
             var auth = new UsernamePasswordAuthenticationToken(
                     uid, null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
             SecurityContextHolder.getContext().setAuthentication(auth);
 
-        } catch (Exception e) {
+        } catch (FirebaseAuthException e) {
+            System.err.println("Firebase token verification failed: " + e.getMessage());
             SecurityContextHolder.clearContext();
             response.setStatus(401);
             response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"Invalid or expired token\"}");
+            response.getWriter().write("{\"error\":\"Invalid or expired Firebase token\"}");
+            return;
+        } catch (Exception e) {
+            System.err.println("Unexpected error during authentication: " + e.getMessage());
+            SecurityContextHolder.clearContext();
+            response.setStatus(401);
+            response.setContentType("application/json");
+            response.getWriter().write("{\"error\":\"Authentication failed\"}");
             return;
         }
 
